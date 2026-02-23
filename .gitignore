@@ -1,0 +1,16 @@
+logback.xml
+logs/
+uploads/
+temp/
+!**/src/main/**/logs/
+!**/src/test/**/logs/
+
+# Maven build output
+target/
+
+# Claude Code temporary files
+tmpclaude-*
+.claude/
+
+# Windows artifacts
+nul

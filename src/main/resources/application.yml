@@ -1,0 +1,80 @@
+spring:
+  application:
+    name: etl-ttu
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/etl_ttu_db?reWriteBatchedInserts=true
+    username: postgres
+    password: postgres
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        jdbc:
+          batch_size: 1000
+        order_inserts: true
+        order_updates: true
+        default_batch_fetch_size: 100
+        query:
+          in_clause_parameter_padding: true
+    open-in-view: false
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 50MB
+      max-request-size: 50MB
+
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+
+logging:
+  level:
+    root: INFO
+    com.ttu.etl: DEBUG
+  file:
+    name: logs/etl-ttu.log
+  pattern:
+    file: "[%d{yyyy-MM-dd HH:mm:ss}] %level - %msg%n"
+    console: "[%d{yyyy-MM-dd HH:mm:ss}] %level - %msg%n"
+  logback:
+    rollingpolicy:
+      max-file-size: 10MB
+      max-history: 30
+      total-size-cap: 1GB
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui
+    tags-sorter: alpha
+    operations-sorter: alpha
+    disable-swagger-default-url: true
+  api-docs:
+    path: /api-docs
+  use-management-port: false
+
+etl:
+  batch-size: 1000
+  transaction-timeout: 1800
+  max-years-back: 5
+  upload-dir: uploads
+  temp-dir: temp

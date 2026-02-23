@@ -1,0 +1,70 @@
+# ETL TTU Application Configuration Template
+# Copy this file to application.yml and update with your settings
+
+spring:
+  application:
+    name: etl-ttu
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/your_database_name
+    username: your_username
+    password: your_password
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        jdbc:
+          batch_size: 1000
+        order_inserts: true
+        order_updates: true
+    open-in-view: false
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 50MB
+      max-request-size: 50MB
+
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+
+logging:
+  level:
+    root: INFO
+    com.ttu.etl: DEBUG
+  file:
+    name: logs/etl-ttu.log
+  pattern:
+    file: "[%d{yyyy-MM-dd HH:mm:ss}] %level - %msg%n"
+    console: "[%d{yyyy-MM-dd HH:mm:ss}] %level - %msg%n"
+  logback:
+    rollingpolicy:
+      max-file-size: 10MB
+      max-history: 30
+      total-size-cap: 1GB
+
+etl:
+  batch-size: 1000
+  transaction-timeout: 1800
+  max-years-back: 5
+  upload-dir: uploads
+  temp-dir: temp
