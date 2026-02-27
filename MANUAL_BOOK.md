@@ -119,7 +119,7 @@ Base URL: `http://localhost:8080/api`
 ### 4.1 Upload File
 
 ```
-POST /etl/upload
+POST /etl/jobs
 Content-Type: multipart/form-data
 Parameter: file (file .xlsx)
 ```
@@ -135,10 +135,18 @@ Parameter: file (file .xlsx)
 
 Proses berjalan **asynchronous** — response langsung dikembalikan, proses ETL jalan di background.
 
-### 4.2 Cek Status Job
+### 4.2 List Semua Job (Paginated)
 
 ```
-GET /etl/status/{jobId}
+GET /etl/jobs?page=0&size=10
+```
+
+Menampilkan semua job yang pernah diproses beserta statistiknya.
+
+### 4.3 Detail Satu Job
+
+```
+GET /etl/jobs/{jobId}
 ```
 
 **Response:**
@@ -159,61 +167,54 @@ GET /etl/status/{jobId}
 
 **Status yang mungkin:** `PENDING` → `EXTRACTING` → `TRANSFORMING` → `LOADING` → `COMPLETED` atau `FAILED`
 
-### 4.3 Daftar Job (Paginated)
+### 4.4 List Produk
 
 ```
-GET /etl/logs?page=0&size=20
+GET /etl/products
+GET /etl/products?inconsistencies=true
 ```
 
-### 4.4 Download Error Report (Excel)
+Menampilkan semua produk yang ter-ekstrak. Parameter `inconsistencies=true` memfilter produk dengan nama atau satuan tidak konsisten antar file.
+
+### 4.5 Detail Produk
 
 ```
-GET /etl/report/{jobId}
+GET /etl/products/{itemCode}
 ```
 
-Mengembalikan file `.xlsx` berisi daftar error per baris.
+Menampilkan detail satu produk berdasarkan kode item.
 
-### 4.5 Export Transactions (CSV)
-
-```
-GET /etl/export/transactions/{jobId}
-```
-
-Kolom: `transaction_no, trx_date, department, customer_code, customer_name, customer_address, subtotal, discount_total, tax_total, fee_total, grand_total, is_valid`
-
-### 4.6 Export Transaction Items (CSV)
+### 4.6 Daftar Tanggal Transaksi
 
 ```
-GET /etl/export/items/{jobId}
+GET /etl/transactions/dates
 ```
 
-Kolom: `transaction_no, line_no, item_code, item_name, qty, unit, unit_price, discount_pct, line_total`
-
-### 4.7 Export Products (CSV)
-
-```
-GET /etl/export/products
-```
-
-Kolom: `item_code, item_name, default_unit`
-
-### 4.8 Validation Report (JSON)
-
-```
-GET /etl/validation-report/{jobId}
-```
+Menampilkan semua tanggal yang memiliki data transaksi beserta jumlahnya. Berguna untuk kalender atau filter tanggal di frontend.
 
 **Response:**
 ```json
-{
-  "totalReceipts": 3300,
-  "totalItems": 15420,
-  "validReceipts": 3217,
-  "failedReceipts": 83,
-  "failedTransactionNos": ["000150/KSR/UTM/1025", "..."],
-  "qtyFractionIssues": 12
-}
+[
+  { "date": "2025-10-15", "count": 120 },
+  { "date": "2025-10-16", "count": 85 }
+]
 ```
+
+### 4.7 List Transaksi per Tanggal
+
+```
+GET /etl/transactions?date=YYYY-MM-DD
+```
+
+Menampilkan semua transaksi pada tanggal tertentu.
+
+### 4.8 Detail Transaksi
+
+```
+GET /etl/transactions/detail?no=000001/KSR/UTM/1025
+```
+
+Menampilkan detail lengkap satu transaksi beserta semua item di dalamnya.
 
 ---
 
@@ -333,16 +334,11 @@ Nota yang tidak lolos validasi grand total ditandai `is_valid = false` tapi **te
 - Validasi grand total menggunakan toleransi ±1.00 — selisih kecil akibat pembulatan dianggap valid
 - **Tidak ada validasi bisnis lanjutan** seperti: cek stok, cek limit kredit customer, dll
 
-### 7.8 Export CSV
-- CSV menggunakan **comma separator** dan **UTF-8 encoding**
-- Field yang mengandung koma atau kutip akan di-escape dengan double-quote
-- **Tidak ada opsi filter** pada export — selalu export semua data per job
-
-### 7.9 Concurrency
+### 7.8 Concurrency
 - **Tidak ada pembatasan upload paralel** — jika 2 file di-upload bersamaan, keduanya diproses secara paralel
 - Bisa menyebabkan masalah performa pada database jika file sangat besar
 
-### 7.10 Keamanan
+### 7.9 Keamanan
 - **Tidak ada autentikasi/otorisasi** — semua endpoint terbuka
 - **Tidak ada rate limiting** pada upload
 - File yang di-upload disimpan di folder `uploads/` tanpa enkripsi
@@ -368,10 +364,11 @@ Nota yang tidak lolos validasi grand total ditandai `is_valid = false` tapi **te
 |---------|----------|--------|
 | Status tetap `EXTRACTING` | File sangat besar / format tidak sesuai | Cek log di `logs/etl-ttu.log` |
 | `extractedRecords = 0` | Format Excel tidak sesuai pola yang diharapkan | Pastikan nomor transaksi berpola 6 digit + slash |
-| `failedRecords` tinggi | Banyak nota gagal validasi grand total | Cek validation report, periksa apakah footer terbaca |
-| `FAILED` status | Error fatal saat proses | Cek `errorMessage` di status response dan log file |
+| `failedRecords` tinggi | Banyak nota gagal validasi grand total | Cek detail job di `GET /etl/jobs/{jobId}`, periksa apakah footer terbaca |
+| `FAILED` status | Error fatal saat proses | Cek `errorMessage` di `GET /etl/jobs/{jobId}` dan log file |
 | Duplicate key error | Upload file yang sama 2x | Data sudah ada, tidak perlu upload ulang |
 | Timeout | File terlalu besar (>3000+ nota) | Tingkatkan `etl.transaction-timeout` di config |
+| Produk inkonsisten | Nama/satuan produk berbeda antar file | Gunakan `GET /etl/products?inconsistencies=true` untuk mengidentifikasi |
 
 ---
 
@@ -379,31 +376,46 @@ Nota yang tidak lolos validasi grand total ditandai `is_valid = false` tapi **te
 
 ### Upload File
 ```bash
-curl -X POST http://localhost:8080/api/etl/upload \
+curl -X POST http://localhost:8080/api/etl/jobs \
   -F "file=@ADHI.xlsx"
 ```
 
-### Cek Status
+### List Semua Job
 ```bash
-curl http://localhost:8080/api/etl/status/{jobId}
+curl "http://localhost:8080/api/etl/jobs?page=0&size=10"
 ```
 
-### Download CSV Transactions
+### Cek Detail Job
 ```bash
-curl -o transactions.csv http://localhost:8080/api/etl/export/transactions/{jobId}
+curl http://localhost:8080/api/etl/jobs/{jobId}
 ```
 
-### Download CSV Items
+### List Produk
 ```bash
-curl -o items.csv http://localhost:8080/api/etl/export/items/{jobId}
+curl http://localhost:8080/api/etl/products
 ```
 
-### Download CSV Products
+### List Produk Inkonsisten
 ```bash
-curl -o products.csv http://localhost:8080/api/etl/export/products
+curl "http://localhost:8080/api/etl/products?inconsistencies=true"
 ```
 
-### Validation Report
+### Detail Produk
 ```bash
-curl http://localhost:8080/api/etl/validation-report/{jobId}
+curl http://localhost:8080/api/etl/products/ITM001
+```
+
+### Daftar Tanggal Transaksi
+```bash
+curl http://localhost:8080/api/etl/transactions/dates
+```
+
+### Transaksi per Tanggal
+```bash
+curl "http://localhost:8080/api/etl/transactions?date=2025-10-15"
+```
+
+### Detail Transaksi
+```bash
+curl "http://localhost:8080/api/etl/transactions/detail?no=000001/KSR/UTM/1025"
 ```

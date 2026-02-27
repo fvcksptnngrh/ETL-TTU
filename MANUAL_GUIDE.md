@@ -154,54 +154,61 @@ Jika selisih melebihi toleransi, receipt ditandai invalid (`is_valid = false`).
 
 Base path: `/api/etl`
 
+### ETL Jobs
+
 1. Upload file
 
 ```http
-POST /upload
+POST /jobs
 Content-Type: multipart/form-data
 form-data: file=<file.xlsx>
 ```
 
-2. Status job
+2. List semua job (pagination)
 
 ```http
-GET /status/{jobId}
+GET /jobs?page=0&size=10
 ```
 
-3. Log job (pagination)
+3. Detail satu job
 
 ```http
-GET /logs?page=0&size=20
+GET /jobs/{jobId}
 ```
 
-4. Download error report (xlsx)
+### Products
+
+4. List semua produk
 
 ```http
-GET /report/{jobId}
+GET /products
+GET /products?inconsistencies=true
 ```
 
-5. Export transactions CSV per job
+5. Detail satu produk
 
 ```http
-GET /export/transactions/{jobId}
+GET /products/{itemCode}
 ```
 
-6. Export transaction items CSV per job
+### Transactions
+
+6. Daftar tanggal yang ada transaksinya
 
 ```http
-GET /export/items/{jobId}
+GET /transactions/dates
 ```
 
-7. Export master products CSV
+7. List transaksi per tanggal
 
 ```http
-GET /export/products
+GET /transactions?date=YYYY-MM-DD
 ```
 
-8. Validation report JSON
+8. Detail satu transaksi beserta item-nya
 
 ```http
-GET /validation-report/{jobId}
+GET /transactions/detail?no=000001/KSR/UTM/1025
 ```
 
 ## 8. Status Job
@@ -277,10 +284,10 @@ Status umum:
 - Cek format template Excel, terutama posisi kolom dan marker header item.
 
 3. Banyak `failedRecords`
-- Cek endpoint validation report dan error report untuk detail parse atau validasi.
+- Cek endpoint `GET /jobs/{jobId}` untuk melihat statistik dan error dari job tersebut.
 
 4. Job `FAILED`
-- Cek field `errorMessage` pada endpoint status dan log file `logs/etl-ttu.log`.
+- Cek field `errorMessage` pada endpoint `GET /jobs/{jobId}` dan log file `logs/etl-ttu.log`.
 
-5. Error report tidak bisa diunduh
-- Kemungkinan job tidak menghasilkan error log.
+5. Produk dengan data tidak konsisten
+- Gunakan `GET /products?inconsistencies=true` untuk melihat produk yang memiliki nama atau satuan tidak konsisten antar file.
