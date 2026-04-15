@@ -3,9 +3,9 @@ spring:
     name: etl-ttu
 
   datasource:
-    url: jdbc:postgresql://localhost:5432/etl_ttu_db?reWriteBatchedInserts=true
-    username: postgres
-    password: postgres
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/etl_ttu_db?reWriteBatchedInserts=true}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
     driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: 10
@@ -49,8 +49,8 @@ server:
 
 logging:
   level:
-    root: INFO
-    com.ttu.etl: DEBUG
+    root: ${LOG_LEVEL_ROOT:INFO}
+    com.ttu.etl: ${LOG_LEVEL_APP:INFO}
   file:
     name: logs/etl-ttu.log
   pattern:
@@ -73,8 +73,8 @@ springdoc:
   use-management-port: false
 
 etl:
-  batch-size: 1000
+  batch-size: ${ETL_BATCH_SIZE:1000}
   transaction-timeout: 1800
   max-years-back: 5
-  upload-dir: uploads
-  temp-dir: temp
+  upload-dir: ${ETL_UPLOAD_DIR:uploads}
+  temp-dir: ${ETL_TEMP_DIR:temp}

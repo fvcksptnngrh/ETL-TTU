@@ -4,6 +4,7 @@ import com.github.pjfanning.xlsx.StreamingReader;
 import com.ttu.etl.dto.ExtractedItem;
 import com.ttu.etl.dto.ExtractedReceipt;
 import com.ttu.etl.exception.EtlException;
+import com.ttu.etl.service.excel.ColumnLayout;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.poi.ss.usermodel.*;
@@ -23,57 +24,6 @@ import java.util.Map;
 @Service
 @RequiredArgsConstructor
 public class ExcelExtractorService {
-
-    /**
-     * Auto-detected column positions from the item table header row.
-     * Transaction header and footer positions are derived from these.
-     */
-    private static class ColumnLayout {
-        // Detected from item table header keywords
-        int lineNo = -1;
-        int itemCode = -1;
-        int itemName = -1;
-        int qty = -1;
-        int unit = -1;
-        int price = -1;
-        int discount = -1;
-        int total = -1;
-
-        // Transaction header - same column as item fields
-        int txnNumber() { return lineNo; }
-        int txnDate() { return itemName; }
-        int department() { return itemName + 3; }
-        int customerCode() { return itemName + 5; }
-        int customerName() { return itemName + 9; }
-        int txnAddress() { return price; }
-
-        // Footer - derived from item column positions
-        int footerDiscount() { return lineNo + 2; }
-        int footerTax() { return itemName + 4; }
-        int footerFee() { return qty + 1; }
-        int footerGrandTotal() { return total - 1; }
-
-        // Summary
-        int summarySubtotal() { return total; }
-
-        boolean isValid() {
-            int count = 0;
-            if (lineNo >= 0) count++;
-            if (itemCode >= 0) count++;
-            if (itemName >= 0) count++;
-            if (qty >= 0) count++;
-            if (unit >= 0) count++;
-            if (price >= 0) count++;
-            if (total >= 0) count++;
-            return count >= 4 && lineNo >= 0 && itemName >= 0;
-        }
-
-        @Override
-        public String toString() {
-            return String.format("lineNo=%d, itemCode=%d, itemName=%d, qty=%d, unit=%d, price=%d, discount=%d, total=%d",
-                    lineNo, itemCode, itemName, qty, unit, price, discount, total);
-        }
-    }
 
     public List<ExtractedReceipt> extractFromExcel(MultipartFile file) {
         log.info("Starting extraction from file: {}", file.getOriginalFilename());
@@ -96,154 +46,127 @@ public class ExcelExtractorService {
     }
 
     private List<ExtractedReceipt> extractFromInputStream(InputStream inputStream) throws IOException {
-        List<ExtractedReceipt> receipts = new ArrayList<>();
-
         try (Workbook workbook = StreamingReader.builder()
                 .rowCacheSize(200)
                 .bufferSize(4096)
                 .open(inputStream)) {
 
+            ExtractionState state = new ExtractionState();
             Sheet sheet = workbook.getSheetAt(0);
 
-            ColumnLayout layout = null;
-            Map<Integer, String> pendingTxnCells = null;
-            int pendingTxnRowNum = -1;
-            ExtractedReceipt currentReceipt = null;
-            boolean inItemSection = false;
-            int rowNum = 0;
-
             for (Row row : sheet) {
-                rowNum = row.getRowNum();
-
-                // Phase 1: Before layout detection - scan for item table header
-                if (layout == null) {
-                    Map<Integer, String> cells = extractAllCellValues(row);
-
-                    ColumnLayout detected = tryDetectLayout(cells);
-                    if (detected != null) {
-                        layout = detected;
-                        log.info("Auto-detected column layout at row {}: {}", rowNum + 1, layout);
-
-                        // Process buffered transaction header
-                        if (pendingTxnCells != null) {
-                            currentReceipt = buildReceiptFromMap(pendingTxnCells, pendingTxnRowNum, layout);
-                            log.debug("Built receipt from buffered txn header: {}", currentReceipt.getTransactionNo());
-                        }
-                        inItemSection = true;
-                        continue;
-                    }
-
-                    // Buffer potential transaction header row (contains "/")
-                    boolean hasTxnLike = cells.values().stream().anyMatch(v -> v.contains("/"));
-                    if (hasTxnLike) {
-                        pendingTxnCells = cells;
-                        pendingTxnRowNum = rowNum;
-                    }
-                    continue;
-                }
-
-                // Phase 2: Normal processing with detected layout
-                String txnColStr = getVal(row, layout.txnNumber());
-
-                // Detect transaction header row
-                if (txnColStr != null && txnColStr.contains("/")) {
-                    String dateStr = getVal(row, layout.txnDate());
-                    if (dateStr != null && !dateStr.isEmpty()) {
-                        if (currentReceipt != null) {
-                            receipts.add(currentReceipt);
-                        }
-                        currentReceipt = buildReceipt(row, rowNum, layout);
-                        inItemSection = false;
-                        log.debug("Found transaction header at row {}: txn={}", rowNum + 1, txnColStr);
-                        continue;
-                    }
-                }
-
-                // Detect item table header row (subsequent receipts)
-                if (isItemTableHeader(row, layout)) {
-                    inItemSection = true;
-                    continue;
-                }
-
-                // Detect footer row
-                if (txnColStr != null && (txnColStr.toLowerCase().startsWith("pot")
-                        || txnColStr.toLowerCase().startsWith("disc")
-                        || txnColStr.toLowerCase().startsWith("diskon"))) {
-                    inItemSection = false;
-                    if (currentReceipt != null) {
-                        currentReceipt.setDiscountTotal(getVal(row, layout.footerDiscount()));
-                        currentReceipt.setTaxTotal(getVal(row, layout.footerTax()));
-                        currentReceipt.setFeeTotal(getVal(row, layout.footerFee()));
-                        currentReceipt.setGrandTotal(getVal(row, layout.footerGrandTotal()));
-                    }
-                    continue;
-                }
-
-                // Item data rows
-                if (inItemSection && currentReceipt != null) {
-                    if (isItemDataRow(row, layout)) {
-                        ExtractedItem item = extractItemRow(row, rowNum + 1, layout);
-                        if (item != null) {
-                            currentReceipt.getItems().add(item);
-                        }
-                    } else {
-                        String subtotalStr = getVal(row, layout.summarySubtotal());
-                        if (subtotalStr != null && isNumericLike(subtotalStr)) {
-                            currentReceipt.setSubtotal(subtotalStr);
-                        }
-                    }
+                state.rowNum = row.getRowNum();
+                if (state.layout == null) {
+                    tryDetectLayout(row, state);
+                } else {
+                    processRow(row, state);
                 }
             }
 
             // Finalize last receipt
-            if (currentReceipt != null) {
-                receipts.add(currentReceipt);
+            if (state.currentReceipt != null) {
+                state.receipts.add(state.currentReceipt);
             }
 
-            log.info("Extracted {} receipts from Excel (streamed {} rows)", receipts.size(), rowNum + 1);
-            return receipts;
+            log.info("Extracted {} receipts from Excel (streamed {} rows)",
+                    state.receipts.size(), state.rowNum + 1);
+            return state.receipts;
         }
     }
 
     /**
-     * Scans cell values for item table header keywords like "No.", "Nama Item", "Satuan", etc.
-     * Returns a ColumnLayout if enough keywords are found (at least 4, including lineNo and itemName).
+     * Phase 1: Scan rows until we hit an item-table header. Before that we
+     * buffer any "transaction-header-looking" row so we can materialize it
+     * once the layout is known.
      */
-    private ColumnLayout tryDetectLayout(Map<Integer, String> cells) {
-        ColumnLayout layout = new ColumnLayout();
+    private void tryDetectLayout(Row row, ExtractionState state) {
+        Map<Integer, String> cells = extractAllCellValues(row);
 
-        for (Map.Entry<Integer, String> entry : cells.entrySet()) {
-            String lower = entry.getValue().toLowerCase().trim();
-            int col = entry.getKey();
+        ColumnLayout detected = ColumnLayout.detect(cells);
+        if (detected != null) {
+            state.layout = detected;
+            log.info("Auto-detected column layout at row {}: {}", state.rowNum + 1, detected);
 
-            if (lower.matches("no\\.?")) {
-                layout.lineNo = col;
-            } else if (lower.contains("kd") || lower.contains("kode") || lower.contains("code")) {
-                layout.itemCode = col;
-            } else if (lower.contains("nama") || lower.contains("name")) {
-                layout.itemName = col;
-            } else if (lower.contains("jml") || lower.contains("qty") || lower.contains("jumlah")) {
-                layout.qty = col;
-            } else if (lower.contains("satuan") || lower.equals("sat") || lower.equals("unit")) {
-                layout.unit = col;
-            } else if (lower.contains("harga") || lower.contains("price")) {
-                layout.price = col;
-            } else if (lower.contains("pot") || lower.contains("disc")) {
-                layout.discount = col;
-            } else if (lower.contains("total")) {
-                layout.total = col; // last match wins (rightmost column)
+            if (state.pendingTxnCells != null) {
+                state.currentReceipt = buildReceiptFromMap(state.pendingTxnCells, state.pendingTxnRowNum, detected);
+                log.debug("Built receipt from buffered txn header: {}", state.currentReceipt.getTransactionNo());
             }
+            state.inItemSection = true;
+            return;
         }
 
-        return layout.isValid() ? layout : null;
+        // Buffer potential transaction header row (contains "/")
+        boolean hasTxnLike = cells.values().stream().anyMatch(v -> v.contains("/"));
+        if (hasTxnLike) {
+            state.pendingTxnCells = cells;
+            state.pendingTxnRowNum = state.rowNum;
+        }
     }
 
     /**
-     * Checks if a row is an item table header (for subsequent receipts after layout detection).
+     * Phase 2: With a known layout, decide whether the row is a transaction
+     * header, an item-table header, a footer, or an item/summary row.
      */
+    private void processRow(Row row, ExtractionState state) {
+        ColumnLayout layout = state.layout;
+        String txnColStr = getVal(row, layout.txnNumber());
+
+        if (isTransactionHeaderRow(row, layout, txnColStr)) {
+            if (state.currentReceipt != null) {
+                state.receipts.add(state.currentReceipt);
+            }
+            state.currentReceipt = buildReceipt(row, state.rowNum, layout);
+            state.inItemSection = false;
+            log.debug("Found transaction header at row {}: txn={}", state.rowNum + 1, txnColStr);
+            return;
+        }
+
+        if (isItemTableHeader(row, layout)) {
+            state.inItemSection = true;
+            return;
+        }
+
+        if (isFooterRow(txnColStr)) {
+            state.inItemSection = false;
+            if (state.currentReceipt != null) {
+                state.currentReceipt.setDiscountTotal(getVal(row, layout.footerDiscount()));
+                state.currentReceipt.setTaxTotal(getVal(row, layout.footerTax()));
+                state.currentReceipt.setFeeTotal(getVal(row, layout.footerFee()));
+                state.currentReceipt.setGrandTotal(getVal(row, layout.footerGrandTotal()));
+            }
+            return;
+        }
+
+        if (state.inItemSection && state.currentReceipt != null) {
+            if (isItemDataRow(row, layout)) {
+                ExtractedItem item = extractItemRow(row, state.rowNum + 1, layout);
+                if (item != null) {
+                    state.currentReceipt.getItems().add(item);
+                }
+            } else {
+                String subtotalStr = getVal(row, layout.summarySubtotal());
+                if (subtotalStr != null && isNumericLike(subtotalStr)) {
+                    state.currentReceipt.setSubtotal(subtotalStr);
+                }
+            }
+        }
+    }
+
+    private boolean isTransactionHeaderRow(Row row, ColumnLayout layout, String txnColStr) {
+        if (txnColStr == null || !txnColStr.contains("/")) return false;
+        String dateStr = getVal(row, layout.txnDate());
+        return dateStr != null && !dateStr.isEmpty();
+    }
+
+    private boolean isFooterRow(String txnColStr) {
+        if (txnColStr == null) return false;
+        String lower = txnColStr.toLowerCase();
+        return lower.startsWith("pot") || lower.startsWith("disc") || lower.startsWith("diskon");
+    }
+
     private boolean isItemTableHeader(Row row, ColumnLayout layout) {
-        String lineNoVal = getVal(row, layout.lineNo);
-        String nameVal = getVal(row, layout.itemName);
+        String lineNoVal = getVal(row, layout.lineNo());
+        String nameVal = getVal(row, layout.itemName());
         if (lineNoVal == null || nameVal == null) return false;
         String lower1 = lineNoVal.toLowerCase().trim();
         String lower2 = nameVal.toLowerCase().trim();
@@ -289,8 +212,8 @@ public class ExcelExtractorService {
     }
 
     private boolean isItemDataRow(Row row, ColumnLayout layout) {
-        Cell lineNoCell = row.getCell(layout.lineNo);
-        Cell itemCodeCell = row.getCell(layout.itemCode);
+        Cell lineNoCell = row.getCell(layout.lineNo());
+        Cell itemCodeCell = row.getCell(layout.itemCode());
         if (lineNoCell == null || itemCodeCell == null) return false;
         if (lineNoCell.getCellType() == CellType.NUMERIC) {
             String itemCode = getCellValueAsString(itemCodeCell);
@@ -303,14 +226,14 @@ public class ExcelExtractorService {
         try {
             return ExtractedItem.builder()
                     .rowNumber(rowNumber)
-                    .lineNo(getVal(row, layout.lineNo))
-                    .itemCode(getVal(row, layout.itemCode))
-                    .itemName(getVal(row, layout.itemName))
-                    .quantity(getVal(row, layout.qty))
-                    .unit(getVal(row, layout.unit))
-                    .price(getVal(row, layout.price))
-                    .discount(getVal(row, layout.discount))
-                    .total(getVal(row, layout.total))
+                    .lineNo(getVal(row, layout.lineNo()))
+                    .itemCode(getVal(row, layout.itemCode()))
+                    .itemName(getVal(row, layout.itemName()))
+                    .quantity(getVal(row, layout.qty()))
+                    .unit(getVal(row, layout.unit()))
+                    .price(getVal(row, layout.price()))
+                    .discount(getVal(row, layout.discount()))
+                    .total(getVal(row, layout.total()))
                     .build();
         } catch (Exception e) {
             log.warn("Error extracting item at row {}: {}", rowNumber, e.getMessage());
@@ -318,9 +241,6 @@ public class ExcelExtractorService {
         }
     }
 
-    /**
-     * Safe cell value getter that handles negative column indices (undetected columns).
-     */
     private String getVal(Row row, int colIndex) {
         if (colIndex < 0) return null;
         return getCellValueAsString(row.getCell(colIndex));
@@ -368,5 +288,19 @@ public class ExcelExtractorService {
             default:
                 return null;
         }
+    }
+
+    /**
+     * Mutable per-extraction state. Kept as a local holder so the row loop
+     * stays readable and helper methods can share progress cleanly.
+     */
+    private static class ExtractionState {
+        final List<ExtractedReceipt> receipts = new ArrayList<>();
+        ColumnLayout layout;
+        Map<Integer, String> pendingTxnCells;
+        int pendingTxnRowNum = -1;
+        ExtractedReceipt currentReceipt;
+        boolean inItemSection;
+        int rowNum;
     }
 }

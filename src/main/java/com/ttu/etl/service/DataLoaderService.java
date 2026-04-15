@@ -34,9 +34,8 @@ public class DataLoaderService {
         Set<String> existingTxnNos = new HashSet<>(transactionHeaderRepository.findAllTransactionNos());
         log.debug("Pre-loaded {} existing transaction numbers", existingTxnNos.size());
 
-        // Pre-load existing products
-        Map<String, Product> knownProducts = new HashMap<>();
-        productRepository.findAll().forEach(p -> knownProducts.put(p.getItemCode(), p));
+        // Pre-load existing product item codes only (projection, not full entities)
+        Set<String> knownItemCodes = new HashSet<>(productRepository.findAllItemCodes());
 
         // Collect new products for batch save
         List<Product> newProducts = new ArrayList<>();
@@ -98,14 +97,13 @@ public class DataLoaderService {
 
                     // Collect new products (no individual save)
                     if (vi.getItemCode() != null && !vi.getItemCode().trim().isEmpty()
-                            && !knownProducts.containsKey(vi.getItemCode())) {
+                            && knownItemCodes.add(vi.getItemCode())) {
                         Product product = Product.builder()
                                 .itemCode(vi.getItemCode())
                                 .itemName(vi.getItemName())
                                 .defaultUnit(vi.getUnit())
                                 .etlJob(etlJob)
                                 .build();
-                        knownProducts.put(vi.getItemCode(), product);
                         newProducts.add(product);
                     }
                 }

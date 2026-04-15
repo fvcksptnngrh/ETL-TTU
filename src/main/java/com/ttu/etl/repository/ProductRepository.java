@@ -16,6 +16,9 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     @Query("SELECT p FROM Product p LEFT JOIN FETCH p.etlJob")
     List<Product> findAllWithEtlJob();
 
+    @Query("SELECT p.itemCode FROM Product p")
+    List<String> findAllItemCodes();
+
     @Query("SELECT p FROM Product p LEFT JOIN FETCH p.etlJob WHERE p.itemCode = :itemCode")
     Optional<Product> findByItemCodeWithEtlJob(String itemCode);
 
